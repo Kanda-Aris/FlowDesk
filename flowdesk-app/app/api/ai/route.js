@@ -2,13 +2,14 @@
 // 1) ตรวจ session ของผู้ใช้จากโทเค็นที่ส่งมา  2) เรียก Gemini พร้อมเครื่องมืออ่านอย่างเดียว
 // 3) เครื่องมือรันด้วยโทเค็นของผู้ถาม (RLS บังคับ)  4) บันทึกประวัติผ่านฟังก์ชันฐานข้อมูลที่ล็อกไว้
 // ตัวแปรสภาพแวดล้อม (Vercel, ห้ามขึ้นต้นด้วย NEXT_PUBLIC_): GEMINI_API_KEY
-// ไม่บังคับ: GEMINI_MODEL (ค่าเริ่มต้น gemini-3.5-flash), AI_DAILY_LIMIT (ค่าเริ่มต้น 40 คำถาม/คน/วัน), GEMINI_THINKING_LEVEL
+// ไม่บังคับ: GEMINI_MODEL (ค่าเริ่มต้น gemini-3.5-flash), AI_DAILY_LIMIT (ค่าเริ่มต้น 40 คำถาม/คน/วัน),
+// GEMINI_THINKING_LEVEL (ค่าเริ่มต้น low = คิดน้อย ตอบเร็ว; ใส่ minimal/medium/high ได้ หรือ off = ไม่ส่งค่านี้)
 import { createClient } from '@supabase/supabase-js';
 import { TOOL_DECLS, runTool, bangkokToday } from '../../../lib/ai-tools';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_Q = 1000;
@@ -38,9 +39,9 @@ function systemPrompt({ name, today, wsName, wsId, shared }) {
   ].join('\n');
 }
 
-async function callGemini(model, key, body) {
+async function callGemini(model, key, body, timeoutMs = 25000) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 22000);
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
@@ -129,15 +130,27 @@ export async function POST(request) {
     const contents = [...history, { role: 'user', parts: [{ text: (shared ? label(user.id) : '') + message }] }];
     const ctx = { sb, user, workspaceId, today, shared };
     const genCfg = { temperature: 0.4, maxOutputTokens: 1500 };
-    if (process.env.GEMINI_THINKING_LEVEL) genCfg.thinkingConfig = { thinkingLevel: process.env.GEMINI_THINKING_LEVEL };
+    const think = (process.env.GEMINI_THINKING_LEVEL || 'low').toLowerCase();
+    if (/^(minimal|low|medium|high)$/.test(think)) genCfg.thinkingConfig = { thinkingLevel: think };
+    const t0 = Date.now();
+    const BUDGET_MS = 50000; // เหลือเวลาไว้บันทึกประวัติก่อนครบ maxDuration
     let answer = '';
     for (let round = 0; round < MAX_ROUNDS; round++) {
-      const data = await callGemini(model, key, {
+      const left = BUDGET_MS - (Date.now() - t0);
+      if (left < 4000) { const te = new Error('budget'); te.name = 'AbortError'; throw te; }
+      const reqBody = () => ({
         systemInstruction: { parts: [{ text: sys }] },
         contents,
         tools: [{ functionDeclarations: TOOL_DECLS }],
         generationConfig: genCfg,
       });
+      let data;
+      try { data = await callGemini(model, key, reqBody(), Math.min(25000, left)); }
+      catch (e) {
+        // โมเดลบางรุ่นไม่รองรับ thinkingConfig: ลองใหม่โดยไม่ส่งค่านี้
+        if (e?.status === 400 && genCfg.thinkingConfig) { delete genCfg.thinkingConfig; data = await callGemini(model, key, reqBody(), Math.min(25000, BUDGET_MS - (Date.now() - t0))); }
+        else throw e;
+      }
       const cand = data?.candidates?.[0];
       if (!cand?.content?.parts?.length) {
         answer = data?.promptFeedback?.blockReason ? 'ขออภัย ตอบคำถามนี้ไม่ได้ ลองถามใหม่ด้วยคำอื่น' : '';
