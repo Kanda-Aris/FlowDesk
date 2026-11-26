@@ -23,6 +23,13 @@ const dateOf = (iso, today) => (iso ? bangkokToday(new Date(iso)) : today);
 
 const TASK_COLS = 'id, title, status, priority, assignee_id, start_date, end_date, created_at, updated_at, projects(name, workspace_id, workspaces(name))';
 
+// แชทสาธารณะ (ctx.shared): ทุกคนใน workspace เห็นคำตอบ จึงจำกัดทุกเครื่องมือให้อยู่ใน workspace นี้เท่านั้น
+// (ไม่ดึงงานจาก workspace อื่น ไม่รวม Sub) บังคับที่นี่ในโค้ด ไม่พึ่งแค่คำสั่งในพรอมต์
+const TASK_COLS_IN = TASK_COLS.replace('projects(', 'projects!inner(');
+const taskCols = (ctx) => (ctx.shared ? TASK_COLS_IN : TASK_COLS);
+const scopeTasks = (q, ctx) => (ctx.shared ? q.eq('projects.workspace_id', ctx.workspaceId) : q);
+const wsArg = (ctx, args) => (ctx.shared ? ctx.workspaceId : uuidOrNull(args.workspace_id) || ctx.workspaceId);
+
 function shapeTask(t, today) {
   const due = t.end_date || null;
   const open = t.status !== 'complete';
@@ -50,9 +57,10 @@ async function namesOf(sb, ids) {
 }
 
 // ---------- เครื่องมือ ----------
-async function get_my_tasks({ sb, user, today }, args) {
+async function get_my_tasks(ctx, args) {
+  const { sb, user, today } = ctx;
   const filter = ['open', 'complete', 'all'].includes(args.status_filter) ? args.status_filter : 'open';
-  let q = sb.from('tasks').select(TASK_COLS).eq('assignee_id', user.id);
+  let q = scopeTasks(sb.from('tasks').select(taskCols(ctx)).eq('assignee_id', user.id), ctx);
   if (filter === 'open') q = q.neq('status', 'complete');
   if (filter === 'complete') q = q.eq('status', 'complete');
   const { data, error } = await q.order('end_date', { ascending: true, nullsFirst: false }).limit(60);
@@ -61,11 +69,12 @@ async function get_my_tasks({ sb, user, today }, args) {
   return { today, filter, count: tasks.length, tasks };
 }
 
-async function get_my_work_summary({ sb, user, today }) {
+async function get_my_work_summary(ctx) {
+  const { sb, user, today } = ctx;
   const since30 = addDays(today, -30);
   const [tr, ar] = await Promise.all([
-    sb.from('tasks').select(TASK_COLS).eq('assignee_id', user.id).limit(1000),
-    sb.from('activity_log').select('action, created_at').eq('actor_id', user.id).gte('created_at', since30 + 'T00:00:00+07:00').limit(1000),
+    scopeTasks(sb.from('tasks').select(taskCols(ctx)).eq('assignee_id', user.id), ctx).limit(1000),
+    (ctx.shared ? sb.from('activity_log').select('action, created_at').eq('workspace_id', ctx.workspaceId) : sb.from('activity_log').select('action, created_at')).eq('actor_id', user.id).gte('created_at', since30 + 'T00:00:00+07:00').limit(1000),
   ]);
   if (tr.error) throw tr.error;
   const tasks = tr.data || [];
@@ -99,10 +108,11 @@ async function get_my_work_summary({ sb, user, today }) {
   };
 }
 
-async function search_tasks({ sb, user, today }, args) {
+async function search_tasks(ctx, args) {
+  const { sb, user, today } = ctx;
   const q = cleanQuery(args.query);
   if (!q) return { error: 'ต้องระบุคำค้น' };
-  let query = sb.from('tasks').select(TASK_COLS).ilike('title', `%${q}%`);
+  let query = scopeTasks(sb.from('tasks').select(taskCols(ctx)).ilike('title', `%${q}%`), ctx);
   if (args.only_mine) query = query.eq('assignee_id', user.id);
   const { data, error } = await query.order('end_date', { ascending: true, nullsFirst: false }).limit(25);
   if (error) throw error;
@@ -111,12 +121,12 @@ async function search_tasks({ sb, user, today }, args) {
   return { count: rows.length, tasks: rows.map((t) => ({ ...shapeTask(t, today), assignee: names[t.assignee_id] || null })) };
 }
 
-async function get_task({ sb, today }, args) {
+async function get_task({ sb, today, shared, workspaceId }, args) {
   const id = uuidOrNull(args.task_id);
   if (!id) return { error: 'task_id ไม่ถูกต้อง' };
   const { data: t, error } = await sb.from('tasks').select(TASK_COLS + ', description, created_by').eq('id', id).maybeSingle();
   if (error) throw error;
-  if (!t) return { error: 'ไม่พบงานนี้ หรือไม่มีสิทธิ์เห็น' };
+  if (!t || (shared && t.projects?.workspace_id !== workspaceId)) return { error: 'ไม่พบงานนี้ หรือไม่มีสิทธิ์เห็น' };
   const { data: cm } = await sb.from('comments').select('author_id, body, created_at').eq('task_id', id).order('created_at', { ascending: false }).limit(10);
   const names = await namesOf(sb, [t.assignee_id, t.created_by, ...(cm || []).map((c) => c.author_id)]);
   return {
@@ -129,16 +139,17 @@ async function get_task({ sb, today }, args) {
   };
 }
 
-async function get_workspace_overview({ sb, workspaceId, today }, args) {
-  const ws = uuidOrNull(args.workspace_id) || workspaceId;
+async function get_workspace_overview(ctx, args) {
+  const { sb, workspaceId, today } = ctx;
+  const ws = wsArg(ctx, args);
   if (!ws) return { error: 'ไม่ได้เลือก workspace' };
   const wr = await sb.from('workspaces').select('id, name').eq('id', ws).maybeSingle();
   if (wr.error) throw wr.error;
   if (!wr.data) return { error: 'ไม่พบ workspace นี้ หรือไม่มีสิทธิ์เห็น' };
   // Sub ทุกชั้นที่ผู้ถามเห็น (RLS กรองให้แล้ว) รวมตัว workspace นี้เป็นตัวแรก
-  const allWs = await sb.from('workspaces').select('id, name, parent_id');
+  const allWs = ctx.shared ? { data: [wr.data] } : await sb.from('workspaces').select('id, name, parent_id');
   if (allWs.error) throw allWs.error;
-  const ids = treeIds(allWs.data || [], ws);
+  const ids = ctx.shared ? [ws] : treeIds(allWs.data || [], ws);
   const wsName = {};
   for (const w of allWs.data || []) wsName[w.id] = clip(w.name, 80);
   const [pr, tr, mr, mrr, wrr] = await Promise.all([
@@ -185,10 +196,11 @@ async function get_workspace_overview({ sb, workspaceId, today }, args) {
   };
 }
 
-async function search_messages({ sb, workspaceId }, args) {
+async function search_messages(ctx, args) {
+  const { sb } = ctx;
   const q = cleanQuery(args.query);
   if (!q) return { error: 'ต้องระบุคำค้น' };
-  const ws = uuidOrNull(args.workspace_id) || workspaceId;
+  const ws = wsArg(ctx, args);
   let query = sb.from('messages').select('author_id, body, created_at, channels!inner(name, workspace_id)').ilike('body', `%${q}%`);
   if (ws) query = query.eq('channels.workspace_id', ws);
   const { data, error } = await query.order('created_at', { ascending: false }).limit(15);
@@ -198,8 +210,9 @@ async function search_messages({ sb, workspaceId }, args) {
   return { count: rows.length, messages: rows.map((m) => ({ channel: clip(m.channels?.name, 40), author: names[m.author_id] || null, at: m.created_at, body: clip(m.body, 300) })) };
 }
 
-async function get_recent_activity({ sb, workspaceId }, args) {
-  const ws = uuidOrNull(args.workspace_id) || workspaceId;
+async function get_recent_activity(ctx, args) {
+  const { sb } = ctx;
+  const ws = wsArg(ctx, args);
   if (!ws) return { error: 'ไม่ได้เลือก workspace' };
   const limit = Math.min(Math.max(parseInt(args.limit, 10) || 15, 1), 30);
   const { data, error } = await sb.from('activity_log').select('actor_id, action, summary, created_at').eq('workspace_id', ws).order('created_at', { ascending: false }).limit(limit);
