@@ -1,0 +1,13 @@
+/* สไตล์หน้าต่างโต้ตอบกลาง (AI B) — ใช้ตัวแปรสีจาก globals.css */
+.backdrop{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:12px;overflow-y:auto}
+.box{width:min(420px,100%);max-height:calc(100dvh - 24px);overflow-y:auto;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:14px;padding:18px;display:grid;gap:12px;box-shadow:0 16px 48px rgba(0,0,0,.55)}
+.title{margin:0;font-size:17px;overflow-wrap:anywhere}
+.msg{margin:0;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.form{display:grid;gap:8px}
+.label{font-size:13px;color:var(--muted)}
+.input{width:100%;box-sizing:border-box;min-height:44px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font:inherit;padding:10px 12px}
+.input:focus{outline:1px solid var(--ruby);border-color:var(--ruby)}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+.actions button{min-height:44px}
+.actions button:disabled{opacity:.5;cursor:default}
+.danger{background:#C62828;border-color:#C62828;color:#fff}

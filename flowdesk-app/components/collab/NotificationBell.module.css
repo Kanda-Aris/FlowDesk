@@ -1,0 +1,31 @@
+/* สไตล์กระดิ่งแจ้งเตือน (AI B) — ใช้ตัวแปรสีจาก globals.css */
+.root{position:relative;display:inline-block}
+.bell{position:relative;min-width:44px;min-height:44px;background:transparent;border:1px solid transparent;border-radius:10px;font-size:20px;line-height:1;padding:0}
+.bell:hover{background:var(--surface2)}
+.badge{position:absolute;top:2px;right:2px;min-width:18px;height:18px;border-radius:99px;background:var(--ruby);color:#fff;font-size:11px;font-weight:700;display:grid;place-items:center;padding:0 5px}
+.panel{position:absolute;top:calc(100% + 6px);width:min(380px,calc(100vw - 16px));max-height:min(70vh,520px);display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.5);z-index:50;overflow:hidden}
+.right{right:0}
+.left{left:0}
+.head{display:flex;align-items:center;gap:8px;padding:6px 8px 6px 14px;border-bottom:1px solid var(--border)}
+.headTitle{flex:1;font-weight:600;font-size:15px}
+.link{background:none;border:0;color:#FF6B8A;min-height:44px;padding:0 8px;font-size:13px}
+.link:disabled{opacity:.4}
+.list{list-style:none;margin:0;padding:0;overflow-y:auto}
+.item{display:flex;align-items:stretch;border-bottom:1px solid var(--border)}
+.item:last-child{border-bottom:0}
+.main{flex:1;min-width:0;text-align:left;background:transparent;border:0;border-radius:0;padding:10px 6px 10px 14px;min-height:56px;display:grid;gap:2px;align-content:center;position:relative}
+.main:hover{background:var(--surface2)}
+.unread .main{padding-left:24px}
+.unread .main::before{content:"";position:absolute;left:10px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:var(--ruby)}
+.label{font-size:14px;overflow-wrap:anywhere}
+.unread .label{font-weight:600}
+.snip{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.time{font-size:12px;color:var(--muted)}
+.del{background:none;border:0;color:var(--muted);min-width:44px;min-height:44px;padding:0}
+.del:hover{color:#FF6B8A}
+.note{color:var(--muted);font-size:14px;text-align:center;padding:24px 14px}
+.errBox{padding:8px 12px}
+/* จอแคบ: ลอยเต็มความกว้างจอ ไม่ว่ากระดิ่งอยู่ตรงไหนของหน้า */
+@media(max-width:520px){
+  .panel{position:fixed;left:8px;right:8px;top:56px;width:auto}
+}

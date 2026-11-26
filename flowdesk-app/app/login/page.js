@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signIn, signUp } from '../../lib/api';
 
@@ -11,8 +11,15 @@ function thaiError(m = '') {
   return m || 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง';
 }
 
+// Only allow redirects to our own /app or /join pages (never to another site).
+function safeNext(n) {
+  return typeof n === 'string' && /^\/(app|join)([/?#][^\\\s]*)?$/.test(n) && !n.startsWith('//') ? n : '/app';
+}
+
 export default function Login() {
   const router = useRouter();
+  const [next, setNext] = useState('/app');
+  useEffect(() => { setNext(safeNext(new URLSearchParams(window.location.search).get('next'))); }, []);
   const [signup, setSignup] = useState(false);
   const [name, setName] = useState(''); const [email, setEmail] = useState(''); const [pw, setPw] = useState('');
   const [msg, setMsg] = useState(''); const [busy, setBusy] = useState(false);
@@ -20,9 +27,9 @@ export default function Login() {
   async function submit(e) {
     e.preventDefault(); setMsg(''); setBusy(true);
     try {
-      const r = signup ? await signUp(email.trim(), pw, name.trim()) : await signIn(email.trim(), pw);
-      if (!r.session) { setMsg('สมัครแล้ว กรุณากดลิงก์ยืนยันในอีเมล แล้วกลับมาเข้าสู่ระบบ'); return; }
-      router.replace('/app');
+      const r = signup ? await signUp(email.trim(), pw, name.trim(), window.location.origin + next) : await signIn(email.trim(), pw);
+      if (!r.session) { setMsg(next.startsWith('/join') ? 'สมัครแล้ว กรุณากดลิงก์ยืนยันในอีเมล แล้วเปิดลิงก์เชิญอีกครั้ง' : 'สมัครแล้ว กรุณากดลิงก์ยืนยันในอีเมล แล้วกลับมาเข้าสู่ระบบ'); return; }
+      router.replace(next);
     } catch (er) { setMsg(thaiError(er.message)); } finally { setBusy(false); }
   }
 

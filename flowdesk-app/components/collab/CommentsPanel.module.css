@@ -1,0 +1,18 @@
+/* สไตล์ของ CommentsPanel — ใช้ตัวแปรสีจาก globals.css (ไม่แก้ globals.css) */
+.panel{display:grid;gap:10px;min-width:0}
+.title{margin:0;font-size:15px;display:flex;align-items:center;gap:8px}
+.count{font-size:11px;font-weight:400;color:var(--muted);border:1px solid var(--border);border-radius:99px;padding:1px 8px}
+.list{display:grid;gap:8px;max-height:360px;overflow-y:auto;padding-right:2px}
+.note{color:var(--muted);font-size:14px;padding:12px 4px}
+.item{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-width:0}
+.meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.name{font-size:13px}
+.time{font-size:12px;color:var(--muted);flex:1}
+.del{background:none;border:0;color:var(--muted);min-width:44px;min-height:44px;margin:-10px -10px -10px 0;padding:0}
+.del:hover{color:#FF6B8A}
+/* white-space: pre-wrap ให้ขึ้นบรรทัดใหม่ตามที่พิมพ์ และตัดคำยาวไม่ให้ล้นจอ 360px */
+.body{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.5}
+.form{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
+.input{background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font:inherit;padding:10px 12px;min-height:44px;resize:vertical;min-width:0}
+.input:focus{outline:1px solid var(--ruby);border-color:var(--ruby)}
+.form button:disabled{opacity:.5;cursor:default}

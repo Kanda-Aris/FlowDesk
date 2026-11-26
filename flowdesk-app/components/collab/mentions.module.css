@@ -1,0 +1,2 @@
+/* ป้ายชื่อที่ถูกกล่าวถึง ใช้ได้ทั้งบนพื้นเทาและพื้นสีทับทิม */
+.mention{font-weight:700;background:rgba(127,127,127,.25);border-radius:4px;padding:0 3px}

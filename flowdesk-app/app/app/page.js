@@ -1,173 +1,213 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+// หน้ารายการงาน (เจ้าของไฟล์: A) เมนูและแท็บอยู่ใน layout.js
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import * as api from '../../lib/api';
+import { useLiveTasks } from '../../lib/api-views';
+import { STATUS, PRIO, todayStr, fmtDate } from '../../lib/ui';
+import TaskTable from '../../components/views/TaskTable';
+import CommentsPanel from '../../components/collab/CommentsPanel';
+import { useDialogs } from '../../components/ui/Dialogs';
 
-const STATUS = { todo: 'ต้องทำ', in_progress: 'กำลังทำ', complete: 'เสร็จแล้ว' };
-const PRIO = { urgent: 'ด่วน', high: 'สูง', normal: 'ปกติ', low: 'ต่ำ' };
-const COLORS = ['#E31C5F', '#3E8EF7', '#2FB675', '#E0A040', '#8A63D2', '#17A2B8'];
-const colorOf = (s = '') => COLORS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
-const initial = (s = '?') => (s.trim()[0] || '?').toUpperCase();
-const today = () => new Date().toISOString().slice(0, 10);
-const fmt = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : '';
+function TaskDetail({ task, ws, user, members, readOnly, onChange, onClose }) {
+  const [title, setTitle] = useState(task.title);
+  const [desc, setDesc] = useState(task.description || '');
+  const [err, setErr] = useState('');
+  useEffect(() => { setTitle(task.title); setDesc(task.description || ''); }, [task.id]);
 
-function Av({ name, id, small }) {
-  return <span className={'av' + (small ? ' sm' : '')} style={{ background: colorOf(id || name) }}>{initial(name)}</span>;
-}
+  const save = async (patch) => { setErr(''); try { await onChange(task.id, patch); } catch (e) { setErr(e.message || 'บันทึกไม่สำเร็จ'); } };
+  const blurTitle = () => { const t = title.trim(); if (!t) { setTitle(task.title); return; } if (t !== task.title) save({ title: t }); };
+  const blurDesc = () => { if (desc !== (task.description || '')) save({ description: desc }); };
 
-export default function AppPage() {
-  const router = useRouter();
-  const [user, setUser] = useState(null);
-  const [wss, setWss] = useState([]); const [ws, setWs] = useState(null);
-  const [projects, setProjects] = useState([]); const [pj, setPj] = useState(null);
-  const [members, setMembers] = useState([]); const [tasks, setTasks] = useState([]);
-  const [mine, setMine] = useState(false); const [myList, setMyList] = useState([]);
-  const [title, setTitle] = useState(''); const [err, setErr] = useState('');
-  const [menu, setMenu] = useState(false); const [ready, setReady] = useState(false);
-
-  const run = async (fn) => { try { setErr(''); return await fn(); } catch (e) { setErr(e.message || 'เกิดข้อผิดพลาด'); } };
-  const nameOf = useMemo(() => { const m = {}; members.forEach((x) => { m[x.profiles.id] = x.profiles.name || x.profiles.email; }); return m; }, [members]);
-
-  useEffect(() => { run(async () => {
-    const u = await api.currentUser();
-    if (!u) { router.replace('/login'); return; }
-    setUser(u);
-    const l = await api.listWorkspaces(); setWss(l); setWs(l[0] || null); setReady(true);
-  }); }, []);
-
-  useEffect(() => { if (!ws) { setProjects([]); setMembers([]); setPj(null); return; } run(async () => {
-    const [p, m] = await Promise.all([api.listProjects(ws.id), api.listMembers(ws.id)]);
-    setProjects(p); setMembers(m); setPj(p[0] || null);
-  }); }, [ws]);
-
-  useEffect(() => { if (!pj) { setTasks([]); return; } run(async () => setTasks(await api.listTasks(pj.id))); }, [pj]);
-  useEffect(() => { if (mine && user) run(async () => setMyList(await api.myTasks(user.id))); }, [mine, user, tasks]);
-
-  const addWs = () => { const n = prompt('ชื่อ Workspace'); if (n && n.trim()) run(async () => { const w = await api.createWorkspace(n.trim()); setWss((a) => [...a, w]); setWs(w); setMine(false); setMenu(false); }); };
-  const addProject = () => { const n = prompt('ชื่อโปรเจกต์'); if (n && n.trim() && ws) run(async () => { const p = await api.createProject(ws.id, n.trim()); setProjects((a) => [...a, p]); setPj(p); setMine(false); setMenu(false); }); };
-  const addTask = (e) => { e.preventDefault(); if (!title.trim() || !pj) return; run(async () => { const t = await api.createTask(pj.id, { title: title.trim() }); setTasks((a) => [...a, t]); setTitle(''); }); };
-  const patch = (id, p) => run(async () => { const t = await api.updateTask(id, p); setTasks((a) => a.map((x) => (x.id === id ? t : x))); });
-  const remove = (id) => { if (confirm('ลบงานนี้?')) run(async () => { await api.deleteTask(id); setTasks((a) => a.filter((x) => x.id !== id)); }); };
-  const logout = async () => { await api.signOut(); router.replace('/login'); };
-
-  const stats = useMemo(() => ({
-    all: tasks.length,
-    doing: tasks.filter((t) => t.status === 'in_progress').length,
-    done: tasks.filter((t) => t.status === 'complete').length,
-    late: tasks.filter((t) => t.status !== 'complete' && t.end_date && t.end_date < today()).length,
-  }), [tasks]);
-
-  const side = (
-    <aside className={'side' + (menu ? ' open' : '')}>
-      <div className="logo"><b>Fd</b> FlowDesk</div>
-      <button className={'nav' + (mine ? ' on' : '')} onClick={() => { setMine(true); setMenu(false); }}><span>📌</span><span className="nm">งานของฉัน</span></button>
-      <div className="sec">Workspace</div>
-      {wss.map((w) => (
-        <button key={w.id} className={'nav' + (!mine && ws?.id === w.id ? ' on' : '')} onClick={() => { setWs(w); setMine(false); }}>
-          <Av name={w.name} id={w.id} /><span className="nm">{w.name}</span>
-        </button>
-      ))}
-      <button className="nav add" onClick={addWs}><span>＋</span><span className="nm">สร้าง Workspace</span></button>
-      {ws && !mine && (<>
-        <div className="sec">โปรเจกต์</div>
-        {projects.map((p) => (
-          <button key={p.id} className={'nav' + (pj?.id === p.id ? ' on' : '')} onClick={() => { setPj(p); setMenu(false); }}><span>▤</span><span className="nm">{p.name}</span></button>
-        ))}
-        <button className="nav add" onClick={addProject}><span>＋</span><span className="nm">โปรเจกต์ใหม่</span></button>
-      </>)}
-      <div className="me">
-        <Av name={members.find((m) => m.profiles.id === user?.id)?.profiles.name || user?.email} id={user?.id} small />
-        <span className="em">{user?.email}</span>
-        <button className="ibtn" onClick={logout} title="ออกจากระบบ" aria-label="ออกจากระบบ">⎋</button>
+  return (<>
+    <div className="backdrop" onClick={onClose} />
+    <aside className="drawer" aria-label="รายละเอียดงาน">
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <b>รายละเอียดงาน</b>
+        <button className="ibtn" onClick={onClose} aria-label="ปิด">✕</button>
+      </div>
+      {err && <div className="err">{err}</div>}
+      <input value={title} disabled={readOnly} onChange={(e) => setTitle(e.target.value)} onBlur={blurTitle} aria-label="ชื่องาน" />
+      <label className="muted">คำอธิบาย</label>
+      <textarea className="area" rows={5} value={desc} disabled={readOnly} placeholder="เพิ่มรายละเอียดของงาน" onChange={(e) => setDesc(e.target.value)} onBlur={blurDesc} />
+      <div className="grid2">
+        <label className="muted">สถานะ
+          <select value={task.status} disabled={readOnly} onChange={(e) => save({ status: e.target.value })}>{Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+        </label>
+        <label className="muted">ความสำคัญ
+          <select value={task.priority} disabled={readOnly} onChange={(e) => save({ priority: e.target.value })}>{Object.entries(PRIO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+        </label>
+        <label className="muted">วันเริ่ม
+          <input type="date" value={task.start_date || ''} disabled={readOnly} onChange={(e) => save({ start_date: e.target.value || null })} />
+        </label>
+        <label className="muted">กำหนดส่ง
+          <input type="date" value={task.end_date || ''} disabled={readOnly} onChange={(e) => save({ end_date: e.target.value || null })} />
+        </label>
+      </div>
+      <label className="muted">ผู้รับผิดชอบ
+        <select value={task.assignee_id || ''} disabled={readOnly} onChange={(e) => save({ assignee_id: e.target.value || null })}>
+          <option value="">＋ มอบหมาย</option>
+          {members.map((m) => <option key={m.profiles.id} value={m.profiles.id}>{m.profiles.name || m.profiles.email}</option>)}
+        </select>
+      </label>
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+        {user && <CommentsPanel taskId={task.id} currentUser={user} workspaceId={ws} />}
       </div>
     </aside>
-  );
+  </>);
+}
 
-  if (!ready) return <div className="center muted">กำลังโหลด…</div>;
+function ListPage() {
+  const router = useRouter();
+  const { askText } = useDialogs();
+  const sp = useSearchParams();
+  const ws = sp.get('ws');
+  const project = sp.get('project');
+  const taskId = sp.get('task');
+  const mine = sp.get('view') === 'mine';
+  const [user, setUser] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [perms, setPerms] = useState(null);
+  const [tasks, setTasks] = useState([]);
+  const [myList, setMyList] = useState([]);
+  const [title, setTitle] = useState('');
+  const [err, setErr] = useState('');
+  // งานที่กดลบแล้วแต่ยังอยู่ในช่วงให้ยกเลิก (id -> ชื่องาน): ซ่อนจากหน้าจอทันที แล้วลบจริงเมื่อครบเวลา
+  const [gone, setGone] = useState({});
+  const timers = useRef({});
 
-  return (
-    <div className="layout">
-      {side}
-      <main className="main">
-        <div className="topbar">
-          <button className="ibtn" onClick={() => setMenu(!menu)} aria-label="เมนู">☰</button>
-          <div className="logo"><b>Fd</b> FlowDesk</div>
+  const run = useCallback(async (fn) => { try { setErr(''); return await fn(); } catch (e) { setErr(e.message || 'เกิดข้อผิดพลาด'); } }, []);
+
+  useEffect(() => { api.currentUser().then(setUser); }, []);
+  useEffect(() => { setMembers([]); if (ws) run(async () => setMembers(await api.listMembers(ws))); }, [ws, run]);
+  useEffect(() => { setPerms(null); if (ws) api.myPermissions(ws).then(setPerms).catch(() => setPerms({ perms: [] })); }, [ws]);
+  useEffect(() => { setTasks([]); if (project) run(async () => setTasks(await api.listTasks(project))); }, [project, run]);
+  useEffect(() => { if (mine && user) run(async () => setMyList(await api.myTasks(user.id))); }, [mine, user, run]);
+  useLiveTasks(project || null, setTasks);
+
+  // อ่านอย่างเดียวเมื่อไม่มีสิทธิ์แก้งานเลยสักอย่าง (ตัดสินจากติ๊ก ไม่ใช่ชื่อบทบาท; ฐานข้อมูลตรวจซ้ำ)
+  const readOnly = !!perms && !api.canEditAnyTask(perms);
+  const shown = useMemo(() => tasks.filter((t) => !(t.id in gone)), [tasks, gone]);
+  const stats = useMemo(() => ({
+    all: shown.length,
+    doing: shown.filter((t) => t.status === 'in_progress').length,
+    done: shown.filter((t) => t.status === 'complete').length,
+    late: shown.filter((t) => t.status !== 'complete' && t.end_date && t.end_date < todayStr()).length,
+  }), [shown]);
+
+  const onChange = async (id, patch) => { const t = await api.updateTask(id, patch); setTasks((a) => a.map((x) => (x.id === id ? t : x))); };
+  const UNDO_MS = 6000;
+  const dropGone = (id) => setGone((g) => { const n = { ...g }; delete n[id]; return n; });
+  const commitDelete = async (id) => {
+    delete timers.current[id];
+    try {
+      await api.deleteTask(id);
+      setTasks((a) => a.filter((x) => x.id !== id));
+    } catch (e) { setErr(e.message || 'ลบงานไม่สำเร็จ'); } // งานจะกลับมาแสดงตามเดิม
+    dropGone(id);
+  };
+  // กดลบ: ซ่อนงานทันทีและให้เวลายกเลิก 6 วินาที ถ้าไม่ยกเลิกจึงลบจริง
+  const onDelete = (id) => {
+    const t = tasks.find((x) => x.id === id);
+    if (!t || timers.current[id]) return;
+    setGone((g) => ({ ...g, [id]: t.title }));
+    timers.current[id] = setTimeout(() => commitDelete(id), UNDO_MS);
+    if (id === taskId) closeTask();
+  };
+  const undoDelete = (id) => { clearTimeout(timers.current[id]); delete timers.current[id]; dropGone(id); };
+  // ออกจากหน้านี้ระหว่างรอ: ลบจริงทันที (ปิดแท็บเฉยๆ จะถือว่ายกเลิก)
+  useEffect(() => () => { Object.keys(timers.current).forEach((id) => { clearTimeout(timers.current[id]); api.deleteTask(id).catch(() => {}); }); timers.current = {}; }, []);
+  const addTask = (e) => {
+    e.preventDefault();
+    if (!title.trim() || !project) return;
+    run(async () => { const t = await api.createTask(project, { title: title.trim() }); setTasks((a) => (a.some((x) => x.id === t.id) ? a : [...a, t])); setTitle(''); });
+  };
+  const closeTask = () => router.replace(`/app?ws=${ws}&project=${project}`);
+  const addWs = async () => {
+    const n = await askText({ title: 'สร้าง Workspace ใหม่', label: 'ชื่อ Workspace', okLabel: 'สร้าง', maxLength: 60 });
+    if (n) run(async () => { const w = await api.createWorkspace(n.trim()); router.push(`/app?ws=${w.id}`); });
+  };
+  const addProject = async () => {
+    if (!ws) return;
+    const n = await askText({ title: 'สร้างโปรเจกต์ใหม่', label: 'ชื่อโปรเจกต์', okLabel: 'สร้าง', maxLength: 80 });
+    if (n) run(async () => { const p = await api.createProject(ws, n.trim()); router.push(`/app?ws=${ws}&project=${p.id}`); });
+  };
+
+  if (mine) {
+    return (
+      <div className="body">
+        <h2 style={{ margin: 0 }}>งานของฉัน</h2>
+        {err && <div className="err">{err}</div>}
+        <div className="tasks">
+          {myList.length === 0 && <div className="empty"><div className="big">🎉</div><div>ยังไม่มีงานที่มอบหมายให้คุณ</div><div style={{ fontSize: 13 }}>เปิดโปรเจกต์แล้วเลือกตัวเองเป็นผู้รับผิดชอบในงาน</div></div>}
+          {myList.map((t) => (
+            <Link key={t.id} href={`/app?ws=${t.projects?.workspace_id}&project=${t.project_id}&task=${t.id}`} className={'tr mine ' + t.status}>
+              <span className={'dot ' + t.status} />
+              <span className="ttl">{t.title}</span>
+              <span className="meta"><span className="pill">{STATUS[t.status]}</span><span className="muted" style={{ fontSize: 13 }}>{t.projects?.name}</span><span className={'due' + (t.end_date && t.end_date < todayStr() ? ' late' : '')}>{t.end_date ? '▦ ' + fmtDate(t.end_date) : 'ไม่มีกำหนดส่ง'}</span></span>
+            </Link>
+          ))}
         </div>
+      </div>
+    );
+  }
 
-        {mine ? (<>
-          <div className="head"><div className="crumb"><b>งานของฉัน</b></div></div>
-          <div className="body">
-            {err && <div className="err">{err}</div>}
-            <div className="tasks">
-              {myList.length === 0 && <div className="empty"><div className="big">🎉</div><div>ยังไม่มีงานที่มอบหมายให้คุณ</div><div style={{ fontSize: 13 }}>เปิดโปรเจกต์แล้วเลือกตัวเองเป็นผู้รับผิดชอบในงาน</div></div>}
-              {myList.map((t) => (
-                <div key={t.id} className={'tr ' + t.status} style={{ gridTemplateColumns: undefined }}>
-                  <span className={'dot ' + t.status} />
-                  <span className="ttl">{t.title}</span>
-                  <span className="meta"><span className="pill">{STATUS[t.status]}</span><span className="muted" style={{ fontSize: 13 }}>{t.projects?.name}</span><span className={'due' + (t.end_date && t.end_date < today() ? ' late' : '')}>{t.end_date ? '▦ ' + fmt(t.end_date) : 'ไม่มีกำหนดส่ง'}</span></span>
-                </div>
-              ))}
+  if (!ws) {
+    return (
+      <div className="welcome">
+        <h2>ยินดีต้อนรับสู่ FlowDesk 👋</h2>
+        <div className="muted">เริ่มใช้งานใน 3 ขั้นตอน</div>
+        <div className="step"><i>1</i><div><b>สร้าง Workspace</b><div className="muted">พื้นที่ทำงานของทีม เช่น ชื่อวิชาหรือชื่อกลุ่ม</div></div></div>
+        <div className="step"><i>2</i><div><b>สร้างโปรเจกต์</b><div className="muted">แยกงานเป็นเรื่องๆ ในแต่ละ Workspace</div></div></div>
+        <div className="step"><i>3</i><div><b>เพิ่มงานและมอบหมาย</b><div className="muted">กำหนดสถานะ ความสำคัญ และวันส่ง</div></div></div>
+        <button className="primary" onClick={addWs}>＋ สร้าง Workspace แรก</button>
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="body"><div className="empty"><div className="big">🗂️</div><div>ยังไม่มีโปรเจกต์ใน Workspace นี้</div><button className="primary" onClick={addProject}>＋ สร้างโปรเจกต์แรก</button></div></div>
+    );
+  }
+
+  const openTask = shown.find((t) => t.id === taskId);
+  return (
+    <div className="body">
+      {err && <div className="err">{err}</div>}
+      <div className="stats">
+        <div className="stat"><b>{stats.all}</b><span>งานทั้งหมด</span></div>
+        <div className="stat"><b>{stats.doing}</b><span>กำลังทำ</span></div>
+        <div className="stat"><b>{stats.done}</b><span>เสร็จแล้ว</span></div>
+        <div className="stat late"><b>{stats.late}</b><span>เลยกำหนด</span></div>
+      </div>
+      {!readOnly && (
+        <form className="add-row" onSubmit={addTask}>
+          <input placeholder="＋ เพิ่มงานใหม่ แล้วกด Enter" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <button className="primary">เพิ่ม</button>
+        </form>
+      )}
+      <TaskTable tasks={shown} members={members} onChange={onChange} onDelete={onDelete} readOnly={readOnly} onOpen={(id) => router.push(`/app?ws=${ws}&project=${project}&task=${id}`)} />
+      {openTask && <TaskDetail task={openTask} ws={ws} user={user} members={members} readOnly={readOnly} onChange={onChange} onClose={closeTask} />}
+      {Object.keys(gone).length > 0 && (
+        <div className="toasts" role="status" aria-live="polite">
+          {Object.entries(gone).map(([id, name]) => (
+            <div className="toast" key={id}>
+              <span className="tt">ลบงาน «{name}» แล้ว</span>
+              <button type="button" onClick={() => undoDelete(id)}>ยกเลิก</button>
             </div>
-          </div>
-        </>) : !ws ? (
-          <div className="welcome">
-            <h2>ยินดีต้อนรับสู่ FlowDesk 👋</h2>
-            <div className="muted">เริ่มใช้งานใน 3 ขั้นตอน</div>
-            <div className="step"><i>1</i><div><b>สร้าง Workspace</b><div className="muted">พื้นที่ทำงานของทีม เช่น ชื่อวิชาหรือชื่อกลุ่ม</div></div></div>
-            <div className="step"><i>2</i><div><b>สร้างโปรเจกต์</b><div className="muted">แยกงานเป็นเรื่องๆ ในแต่ละ Workspace</div></div></div>
-            <div className="step"><i>3</i><div><b>เพิ่มงานและมอบหมาย</b><div className="muted">กำหนดสถานะ ความสำคัญ และวันส่ง</div></div></div>
-            <button className="primary" onClick={addWs}>＋ สร้าง Workspace แรก</button>
-          </div>
-        ) : (<>
-          <div className="head">
-            <div className="crumb">{ws.name}{pj && <> / <b>{pj.name}</b></>}</div>
-            <div className="tabs">
-              <button className="tab on">รายการ</button>
-              <button className="tab" disabled>Board<small>เร็วๆ นี้</small></button>
-              <button className="tab" disabled>ปฏิทิน<small>เร็วๆ นี้</small></button>
-              <button className="tab" disabled>Gantt<small>เร็วๆ นี้</small></button>
-              <button className="tab" disabled>แชท<small>เร็วๆ นี้</small></button>
-            </div>
-          </div>
-          <div className="body">
-            {err && <div className="err">{err}</div>}
-            {!pj ? (
-              <div className="empty"><div className="big">🗂️</div><div>ยังไม่มีโปรเจกต์ใน {ws.name}</div><button className="primary" onClick={addProject}>＋ สร้างโปรเจกต์แรก</button></div>
-            ) : (<>
-              <div className="stats">
-                <div className="stat"><b>{stats.all}</b><span>งานทั้งหมด</span></div>
-                <div className="stat"><b>{stats.doing}</b><span>กำลังทำ</span></div>
-                <div className="stat"><b>{stats.done}</b><span>เสร็จแล้ว</span></div>
-                <div className="stat late"><b>{stats.late}</b><span>เลยกำหนด</span></div>
-              </div>
-              <form className="add-row" onSubmit={addTask}>
-                <input placeholder="＋ เพิ่มงานใหม่ แล้วกด Enter" value={title} onChange={(e) => setTitle(e.target.value)} />
-                <button className="primary">เพิ่ม</button>
-              </form>
-              <div className="tasks">
-                {tasks.length > 0 && <div className="tr th"><span /><span>ชื่องาน</span><span>สถานะ</span><span>ความสำคัญ</span><span>ผู้รับผิดชอบ</span><span>กำหนดส่ง</span><span /></div>}
-                {tasks.length === 0 && <div className="empty"><div className="big">✨</div><div>ยังไม่มีงานในโปรเจกต์นี้</div><div style={{ fontSize: 13 }}>พิมพ์ชื่องานในช่องด้านบนเพื่อเริ่ม</div></div>}
-                {tasks.map((t) => (
-                  <div key={t.id} className={'tr ' + t.status}>
-                    <span className={'dot ' + t.status} />
-                    <span className="ttl">{t.title}</span>
-                    <span className="meta">
-                      <select className="sel" value={t.status} onChange={(e) => patch(t.id, { status: e.target.value })}>{Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-                      <select className={'sel pr-' + t.priority} value={t.priority} onChange={(e) => patch(t.id, { priority: e.target.value })}>{Object.entries(PRIO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-                      <select className="sel" value={t.assignee_id || ''} onChange={(e) => patch(t.id, { assignee_id: e.target.value || null })}>
-                        <option value="">＋ มอบหมาย</option>
-                        {members.map((m) => <option key={m.profiles.id} value={m.profiles.id}>{m.profiles.name || m.profiles.email}</option>)}
-                      </select>
-                      <input className={'due' + (t.status !== 'complete' && t.end_date && t.end_date < today() ? ' late' : '')} type="date" value={t.end_date || ''} onChange={(e) => patch(t.id, { end_date: e.target.value || null })} aria-label="กำหนดส่ง" />
-                    </span>
-                    <button className="ibtn" onClick={() => remove(t.id)} aria-label="ลบงาน">🗑</button>
-                  </div>
-                ))}
-              </div>
-            </>)}
-          </div>
-        </>)}
-      </main>
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="center muted">กำลังโหลด…</div>}>
+      <ListPage />
+    </Suspense>
   );
 }
